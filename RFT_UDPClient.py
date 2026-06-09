@@ -10,14 +10,14 @@ class RFT_UDPClient:
     def __init__(self, clientID):
         id = clientID
     
-    def reqFn(self, fn, serverName, serverPort):
-        message = f'REQ {fn}' # TODO: construct msg with RFT_UDPPacket.py
-        clientSocket = socket(AF_INET, SOCK_RAW)
-        clientSocket.settimeout(1.0)
-        self.clientSocket.sendto(message.encode(), (serverName, serverPort))
+    def request_file(self, fn, serverName, serverPort):
+        request_msg = f'REQ {fn}' # TODO: construct msg with RFT_UDPPacket.py
+        client_socket = socket(AF_INET, SOCK_RAW)
+        client_socket.settimeout(1.0)
+        self.clientSocket.sendto(request_msg.encode(), (serverName, serverPort))
         try: 
-            reply, serverAddress = clientSocket.recvfrom(1024)
+            reply, serverAddress = client_socket.recvfrom(1024)
             print('Response:', reply)
         except timeout as e:
             f'Error: request timed out.'
-        clientSocket.close()
+        client_socket.close()
