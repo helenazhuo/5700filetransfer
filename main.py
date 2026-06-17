@@ -1,9 +1,7 @@
 import sys
-import RFT_UDPClient, RFT_UDPServer
+from RFT_UDPClient import RFT_UDPClient
+from RFT_UDPServer import RFT_UDPServer
 file_sizes = ['10mb', '100mb', '500mb', '800mb', '1gb']
-# Global counters
-clients_num = 0 
-servers_num = 0
 # Testing
 SERVER_IP = '127.0.0.1'
 SERVER_PORT = 12000
@@ -30,21 +28,31 @@ def prompt_for_dest() -> tuple:
     return (dest_ip, dest_port)
 
 def main() -> int:
+    # Tracks cli and server objs
+    global clients_num, servers_num
+    clients_num = 0
+    servers_num = 0
+    # Tracks runtime options
     mode = None
+    choice = None
+    loss_pct = 0
     # Prompt for regular or testing setup
     while mode != 'r' and mode != 't':
         mode = input("Enter 'r' for regular mode, or 't' for testing: ").strip()
-
+        # Prompt for loss percentage to apply
+        if mode == 't':
+            while loss_pct not in [0, 2, 4]:
+                loss_pct = int(input("Enter loss % to apply (0, 2, or 4): "))
     # Prompt for cli or server
     while choice != 'c' and choice != 's':
         choice = input("Enter c for client, or s for server: ").strip()
         if choice == 's':
             servers_num += 1
             server = RFT_UDPServer(servers_num)
-            server.start_server()
-            server.close_server(mode)
+            server.start_server(mode, loss_pct)
+            server.close_server()
         elif choice == 'c':
-            clients += 1
+            clients_num += 1
             if mode == 'r':
                 (dest_ip, dest_port) = prompt_for_dest()
                 client = RFT_UDPClient(clients_num, dest_ip, dest_port)
@@ -59,6 +67,7 @@ def main() -> int:
                     print(f'Requesting: {fn}')
                     client.request_file(fn, dest_ip, dest_port)
             client.close()
+    return 0
 
 if __name__ == '__main__':
     sys.exit(main())
