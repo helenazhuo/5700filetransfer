@@ -1,25 +1,64 @@
 import sys
-import RFT_UDPClient, RFT_UDPServer, RFT_UDPPacket
-fileSizes = ['10mb', '100mb', '500mb', '800mb', '1gb']
+import RFT_UDPClient, RFT_UDPServer
+file_sizes = ['10mb', '100mb', '500mb', '800mb', '1gb']
+# Global counters
+clients_num = 0 
+servers_num = 0
+# Testing
+SERVER_IP = '127.0.0.1'
+SERVER_PORT = 12000
 
-# Currently does not check fileSize str. 
-def generateTestFileName(fileSize) -> str:
-    return 'test_' + {fileSize} + '_file'
+def generate_fn(file_size) -> str:
+    """Generates a test filename for a given file size string.
+
+    Args:
+        file_size (str): File size label (e.g. '10mb', '1gb').
+
+    Returns:
+        str: Formatted test filename (e.g. 'test_10mb_file').
+    """
+    return f'test_{file_size}_file'
+
+def prompt_for_dest() -> tuple:
+    """Prompts the user to enter a destination IP address and port number.
+
+    Returns:
+        tuple: (dest_ip, dest_port) as (str, int).
+    """
+    dest_ip = input("Enter destination IP: ")
+    dest_port = int(input("Enter destination port: "))
+    return (dest_ip, dest_port)
 
 def main() -> int:
-    choice = None
+    mode = None
+    # Prompt for regular or testing setup
+    while mode != 'r' and mode != 't':
+        mode = input("Enter 'r' for regular mode, or 't' for testing: ").strip()
+
+    # Prompt for cli or server
     while choice != 'c' and choice != 's':
-        print("Enter c for client, s for server:")
-        choice = input()
-        if choice == 'c':
-            for size in fileSizes:
-                fn = generateTestFileName(size)
-                # TODO: implement runClient() in client class -> client = RFT_UDPClient(fn)
-                # runClient()
-        elif choice == 's':
-            # TODO: implement runServer in cerver class
-            # runServer()
-            print('placeholder') # remove later
-        
+        choice = input("Enter c for client, or s for server: ").strip()
+        if choice == 's':
+            servers_num += 1
+            server = RFT_UDPServer(servers_num)
+            server.start_server()
+            server.close_server(mode)
+        elif choice == 'c':
+            clients += 1
+            if mode == 'r':
+                (dest_ip, dest_port) = prompt_for_dest()
+                client = RFT_UDPClient(clients_num, dest_ip, dest_port)
+                fn = input("Enter requested file: ")
+                print(f'Requesting: {fn}')
+                client.request_file(fn, dest_ip, dest_port)
+            elif mode == 't':
+                (dest_ip, dest_port) = (SERVER_IP, SERVER_PORT)
+                client = RFT_UDPClient(clients_num, dest_ip, dest_port)
+                for size in file_sizes:
+                    fn = generate_fn(size)
+                    print(f'Requesting: {fn}')
+                    client.request_file(fn, dest_ip, dest_port)
+            client.close()
+
 if __name__ == '__main__':
     sys.exit(main())
