@@ -76,7 +76,7 @@ def build_UDP_header(src_port: int, dest_port: int, payload: bytes):
     """
     length = 8 + len(payload) # 8-byte header + payload
     udp_checksum = 0 # No checksum over pseudoheader
-    return struct.pack(b'HHHH', src_port, dest_port, length, udp_checksum)
+    return struct.pack('!HHHH', src_port, dest_port, length, udp_checksum)
 
 def build_packet(src_ip: str, dest_ip: str, src_port: int, dest_port: int, payload: bytes, packet_id=0):
     """Builds a packet from an IP header, UDP header, and payload.
@@ -84,7 +84,7 @@ def build_packet(src_ip: str, dest_ip: str, src_port: int, dest_port: int, paylo
     payload_length = len(payload)
     IP_header = build_IP_header(src_ip, dest_ip, payload_length, packet_id)
     UDP_header = build_UDP_header(src_port, dest_port, payload)
-    return struct.pack(IP_header + UDP_header + payload)
+    return IP_header + UDP_header + payload
 
 def parse_packet(data: bytes):
     """Parses a raw packet into its IP header, UDP header, and payload, and verifies its integrity.
@@ -101,7 +101,7 @@ def parse_packet(data: bytes):
 
     # Unpack IP header
     ip_raw = data[:IP_HEADER_SIZE]
-    ver_IHL, dscp_ecn, length, packet_id, fragment_flags, ttl, protocol, ip_checksum, src, dst = \
+    ver_IHL, dscp_ecn, length, packet_id, fragment_flags, ttl, protocol, ip_checksum, src_ip, dst_ip = \
         struct.unpack('!BBHHHBBH4s4s', ip_raw)
 
     # Verify integrity of packet. Discard packet and request retransmission if corrupted.
@@ -122,8 +122,8 @@ def parse_packet(data: bytes):
         'ttl': ttl,
         'protocol': protocol,
         'checksum': ip_checksum,
-        'src': socket.inet_ntoa(src),
-        'dst': socket.inet_ntoa(dst)
+        'src_ip': socket.inet_ntoa(src_ip),
+        'dst_ip': socket.inet_ntoa(dst_ip)
     }
 
     udp_fields = {
