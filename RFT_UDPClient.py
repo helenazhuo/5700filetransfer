@@ -27,7 +27,7 @@ class RFT_UDPClient:
         self.server_ip = server_ip
         self.server_port = server_port
         # Sockets
-        self.socket = sock.socket(sock.AF_INET, sock.SOCK_RAW)
+        self.socket = sock.socket(sock.AF_INET, sock.SOCK_RAW, sock.IPProto_UDP)
         self.socket.bind((self.src_ip, self.src_port))
         self.socket.settimeout(1.0)
         # Counters & Threading

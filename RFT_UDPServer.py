@@ -37,7 +37,7 @@ class RFT_UDPServer:
         self.dest_ip = None
         self.dest_port = None
         # Socket
-        self.socket = sock.socket(sock.AF_INET, sock.SOCK_RAW)
+        self.socket = sock.socket(sock.AF_INET, sock.SOCK_RAW, sock.IPProto_UDP)
         self.socket.bind((self.src_ip, self.src_port))
         self.timeout = 1.0
         self.socket.settimeout(self.timeout)
