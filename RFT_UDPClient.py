@@ -46,6 +46,7 @@ class RFT_UDPClient:
             dest_ip (str): Destination IP address.
             dest_port (int): Destination port.
         """
+        print(f'[CLIENT] Requesting {fn} from {dest_ip}:{dest_port}')
         # Send request packet
         payload = f'REQ {fn}'.encode()
         req_packet = build_packet(self.src_ip, dest_ip, self.src_port, dest_port, payload)
@@ -80,6 +81,8 @@ class RFT_UDPClient:
                     continue
                 # Valid packets: increment count and extract data
                 self.packets_received += 1
+                if self.packets_received % 100 == 0:
+                    print(f'[CLIENT] Received {self.packets_received} packets')
                 ip_fields, udp_fields, payload = result
 
                 # Parse sequence number and FIN flag from payload header
@@ -99,6 +102,7 @@ class RFT_UDPClient:
                         self.expected_seq += 1
                     write_done = self.expected_seq - 1 == seq_num
                     if fin and write_done:
+                        print(f'[CLIENT] File fully received — {self.packets_received} packets total')
                         self.stop_ack.set()
                         dest_ip = ip_fields['src_ip']
                         dest_port = udp_fields['src_port']
@@ -126,6 +130,7 @@ class RFT_UDPClient:
 
     def send_fin_report(self, dest_ip: str, dest_port: int):
         """Sends final report stats client-side to server with a DONE msg."""
+        print(f'[CLIENT] Sending DONE report to server')
         md5_client = compute_md5(self.save_path)
         payload = f'DONE {md5_client} {self.packets_received}'.encode()
         packet = build_packet(self.src_ip, dest_ip, self.src_port, dest_port, payload)

@@ -28,6 +28,8 @@ def prompt_for_dest() -> tuple:
     return (dest_ip, dest_port)
 
 def main() -> int:
+    print("RFT Program")
+    print("---------------")
     # Tracks cli and server objs
     global clients_num, servers_num
     clients_num = 0
@@ -53,15 +55,13 @@ def main() -> int:
             server.close_server()
         elif choice == 'c':
             clients_num += 1
+            (dest_ip, dest_port) = prompt_for_dest()
+            client = RFT_UDPClient(clients_num, dest_ip, dest_port)
             if mode == 'r':
-                (dest_ip, dest_port) = prompt_for_dest()
-                client = RFT_UDPClient(clients_num, dest_ip, dest_port)
                 fn = input("Enter requested file: ")
                 print(f'Requesting: {fn}')
                 client.request_file(fn, dest_ip, dest_port)
             elif mode == 't':
-                (dest_ip, dest_port) = (SERVER_IP, SERVER_PORT)
-                client = RFT_UDPClient(clients_num, dest_ip, dest_port)
                 for size in file_sizes:
                     fn = generate_fn(size)
                     print(f'Requesting: {fn}')

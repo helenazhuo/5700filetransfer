@@ -50,6 +50,7 @@ class RFT_UDPServer:
 
     def start_server(self, mode_selection, loss_pct_selection):
         """Sets server options and starts server by running multiple threads."""
+        print("Server started")
         # Set server options
         self.mode = mode_selection
         self.loss_pct = loss_pct_selection
@@ -92,6 +93,7 @@ class RFT_UDPServer:
     def handle_req(self, payload):
         """Handles a file request by dedicating a worker thread."""
         self.fn = payload.split(b' ', 1)[1].decode()              
+        print(f'[SERVER] Received request for: {self.fn}')
         handler_t = threading.Thread(target=self.handle_client, args=())
         handler_t.start()
 
@@ -124,6 +126,7 @@ class RFT_UDPServer:
     def handle_client(self):
         """Dedicated client handler for a worker thread."""
         self.fs = os.path.getsize(self.fn)
+        print(f'[SERVER] Starting transfer of {self.fn} ({format_filesize(self.fs)})')
         self.send_file()
 
     def send_file(self, retransmit = False):
@@ -142,6 +145,8 @@ class RFT_UDPServer:
                 packet = build_packet(self.src_ip, self.dest_ip, self.src_port, self.dest_port, chunk, self.latest_packet)
                 self.latest_packet += 1
                 self.socket.sendto(packet, (self.dest_ip, self.dest_port))
+                if self.seq_num % 100 == 0:  # print every 100 packets
+                    print(f'[SERVER] Sent packet {self.seq_num}')
                 self.seq_num += 1
                 # Report stats
                 if retransmit == True:
@@ -157,6 +162,7 @@ class RFT_UDPServer:
         packet = build_packet(self.src_ip, self.dest_ip, self.src_port, self.dest_port, fin_payload, self.seq_num)
         self.socket.sendto(packet, (self.dest_ip, self.dest_port))
         self.fin_sent = True
+        print(f'[SERVER] FIN sent — {self.packets_sent} packets sent, {self.packets_retransmitted} retransmitted')
 
     def retransmit(self):
         """Retransmits a file."""
@@ -165,6 +171,7 @@ class RFT_UDPServer:
     
     def print_txt_report(self, md5_client, packets_received_cli):
         """Prints a text report."""
+        print(f'[SERVER] Transfer complete. Generating report...')
         os.makedirs('reports', exist_ok=True)
         self.md5_original = compute_md5(self.fn)
         duration_unfmt = self.transfer_end - self.transfer_start
