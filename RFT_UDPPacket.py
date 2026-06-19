@@ -43,6 +43,7 @@ def build_IP_header(src_ip: str, dest_ip: str, payload_length: int, packet_id: i
     ver_IHL = (ver << 4) | IHL # Combines ver and IHL into 1 byte
     dscp_ecn = 0 # Default priority, 1 byte
     length = 20 + 8 + payload_length # IP header + UDP header + payload
+    packet_id = packet_id % 65535 # Wrap to 16-bit
     fragment_offset = 0
     flags = 0b010 # Don't fragment
     fragment_flags = (flags << 13) | fragment_offset
@@ -103,9 +104,17 @@ def parse_packet(data: bytes):
     ip_raw = data[:IP_HEADER_SIZE]
     ver_IHL, dscp_ecn, length, packet_id, fragment_flags, ttl, protocol, ip_checksum, src_ip, dst_ip = \
         struct.unpack('!BBHHHBBH4s4s', ip_raw)
+    
+    # Filter non-UDP packets before checksum check
+    if protocol != socket.IPPROTO_UDP:
+        return None
 
     # Verify integrity of packet. Discard packet and request retransmission if corrupted.
-    if checksum(ip_raw) != 0xffff:
+    # IP header checksum field is zeroed out due to OS modification of that field
+    ip_raw_for_check = ip_raw[:10] + b'\x00\x00' + ip_raw[12:]
+    computed = checksum(ip_raw_for_check)
+    if computed != ip_checksum:
+        print(f'[PACKET] Error: Checksum mismatch.')
         return None
 
     # Unpack UDP header

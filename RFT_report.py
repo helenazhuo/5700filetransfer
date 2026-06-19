@@ -66,7 +66,8 @@ def generate_report(s: 'RFT_UDPServer', md5_client: str, packets_received_cli: i
         md5_client (str):           MD5 hash of the file received by the client.
         packets_received_cli (int): Number of packets received by the client.
     """
-    file = f'server{s.server_id}_{s.fn}'
+    test_file = s.fn.split('samples/')[1]
+    file = f'reports/server{s.server_id}_{test_file}'
     with open(file, 'w') as f:
         f.write(
             f"Name of the transferred file: {s.fn}\n"
@@ -94,7 +95,7 @@ def print_results(loss_pct: int, md5_original: str, duration: str, md5_client: s
         "---------------------------------------------------------\n"
         f"MD5 hash of original file:    {md5_original}\n"
         f"MD5 hash of received file:    {md5_client}\n"
-        f"File transfer at {loss_pct}%: {success}\n"
+        f"File transfer at {loss_pct}% packet loss: {success}\n"
         f"Time to transfer (hh:mm:ss):  {duration}\n"
         "---------------------------------------------------------\n"
     )

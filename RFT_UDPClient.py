@@ -5,136 +5,182 @@ import time
 import os
 from RFT_report import *
 
+BUFFER_SIZE = 65535
+ACK_INTERVAL = 0.01   # seconds between ACK checks
+ACK_THRESHOLD = 100   # only send a cumulative ACK after advancing this many chunks
+TIMEOUT = 1.0         # socket recv timeout
+
+
 class RFT_UDPClient:
-    """Requests download of a file from a UDP web server.
-    
-    Sends the filename to request, receives file segments, verifies checksums and sends cumulative ACKs.
+    """Requests a file over UDP and receives it using cumulative ACKs.
+
+    Receives file chunks, buffers out-of-order packets, writes them in order,
+    and periodically sends a cumulative ACK for the highest contiguous chunk.
     """
 
-    def __init__(self, client_id: int, server_ip: str, server_port: int):
+    def __init__(self, client_id: int, src_port: int, server_ip: str, server_port: int):
         """Initializes the UDP client.
 
         Args:
-            client_id (int):    Unique identifier for this client instance.
-            server_ip (str):    IP address of the server.
-            server_port (int):  Port number of the server.
+            client_id (int):   Unique identifier for this client instance.
+            src_port (int):    Local source port to bind to.
+            server_ip (str):   IP address of the server.
+            server_port (int): Port number of the server.
         """
         self.client_id = client_id
         self.save_path = None
-        # Packet
+        # Addressing
         self.src_ip = sock.gethostbyname(sock.gethostname())
-        self.src_port = 0  # 0 -> OS assigns an available port
+        self.src_port = src_port
         self.server_ip = server_ip
         self.server_port = server_port
-        # Sockets
+        # Socket
         self.socket = sock.socket(sock.AF_INET, sock.SOCK_RAW, sock.IPPROTO_UDP)
+        self.socket.setsockopt(sock.IPPROTO_IP, sock.IP_HDRINCL, 1)
+        self.socket.setsockopt(sock.SOL_SOCKET, sock.SO_RCVBUF, 4 * 1024 * 1024)
         self.socket.bind((self.src_ip, self.src_port))
-        self.socket.settimeout(1.0)
-        # Counters & Threading
-        self.seq_num_lock = threading.Lock()
-        self.expected_seq = 0        # next expected sequence number
-        # Report stats
+        self.socket.settimeout(TIMEOUT)
+        # State
+        self.seq_lock = threading.Lock()
+        self.expected_seq = 0     # next contiguous chunk needed
         self.packets_received = 0
-    
-    def request_file(self, fn: str, dest_ip: str, dest_port: int):
-        """Requests a file for a specified server.
-        
-        Starts a thread for receiving and a thread for sending ACKs.
+
+    def request_file(self, fn: str):
+        """Requests a file and runs the receive + ACK threads until complete.
 
         Args:
-            fn (str): The filename.
-            dest_ip (str): Destination IP address.
-            dest_port (int): Destination port.
+            fn (str): The filename to request.
         """
-        print(f'[CLIENT] Requesting {fn} from {dest_ip}:{dest_port}')
-        # Send request packet
-        payload = f'REQ {fn}'.encode()
-        req_packet = build_packet(self.src_ip, dest_ip, self.src_port, dest_port, payload)
-        self.socket.sendto(req_packet, (dest_ip, dest_port))
+        self.expected_seq = 0
+        self.packets_received = 0
 
-        # Create dir for file
-        self.save_path = os.path.join('saved_files', f'client_{self.client_id}', fn)
+        # Send the request
+        payload = f'REQ {fn}'.encode()
+        req_packet = build_packet(self.src_ip, self.server_ip,
+                                  self.src_port, self.server_port, payload)
+        self.socket.sendto(req_packet, (self.server_ip, self.server_port))
+        print(f'[CLIENT] Requesting {fn} from {self.server_ip}:{self.server_port}')
+
+        # Prepare save location. fn already includes the test_samples/ prefix,
+        # so join only with the saved_files root.
+        self.save_path = os.path.join('saved_files', fn)
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
-        # Start threads for receiving file packets and sending acks
+        # Run receive and ACK threads
         self.stop_ack = threading.Event()
-        recv_t = threading.Thread(target=self.receive_file, args=())
-        ack_t = threading.Thread(target=self.ack_monitor, args=(dest_ip, dest_port))
+        recv_t = threading.Thread(target=self.receive_file)
+        ack_t = threading.Thread(target=self.ack_monitor)
         recv_t.start()
         ack_t.start()
         recv_t.join()
         ack_t.join()
 
+        # File is closed and flushed by now — send DONE with the MD5
+        self.send_done()
+
     def receive_file(self):
-        """Receives file chunks from the server, verifies integrity, and writes/saves file."""
-        received = {} # Tracks received chunks, indexed by seq_num.
-        with open(self.save_path, 'wb') as f: # open in binary mode
+        """Receives chunks, buffers out-of-order ones, writes in order until FIN."""
+        received = {}            # seq -> chunk, buffer for out-of-order packets
+        with open(self.save_path, 'wb') as f:
             while True:
-                # Receive packet and parse
                 try:
-                    data, server_address = self.socket.recvfrom(65535)
+                    data, _ = self.socket.recvfrom(BUFFER_SIZE)
+                except KeyboardInterrupt:
+                    print('\n[CLIENT] Stopping reception.')
+                    break
                 except sock.timeout:
-                    continue # if no data sent yet, wait
-                # If successful, parse
+                    continue
                 result = parse_packet(data)
-                if result is None:          # checksum failed, discard
+                if result is None:
                     continue
-                # Valid packets: increment count and extract data
-                self.packets_received += 1
-                if self.packets_received % 100 == 0:
-                    print(f'[CLIENT] Received {self.packets_received} packets')
                 ip_fields, udp_fields, payload = result
-
-                # Parse sequence number and FIN flag from payload header
-                seq_num = int.from_bytes(payload[:4], 'big') # big-endian bytes 0 to 3
-                fin = payload[4]
-                chunk = payload[5:] if fin != 1 else b'' # If fin then empty chunk expected
-
-                # Discard duplicates, otherwise store in received
-                if seq_num in received:
+                if udp_fields['src_port'] != self.server_port:
                     continue
-                received[seq_num] = chunk
+                if len(payload) < 5:
+                    continue
 
-                # Write all chunks consecutively to disk. Out-of-order packets are buffered.
-                with self.seq_num_lock:
-                    while self.expected_seq in received:
-                        f.write(received.pop(self.expected_seq))
-                        self.expected_seq += 1
-                    write_done = self.expected_seq - 1 == seq_num
-                    if fin and write_done:
-                        print(f'[CLIENT] File fully received — {self.packets_received} packets total')
+                self.packets_received += 1
+                if self.packets_received % 1000 == 0:
+                    print(f'[CLIENT] Received {self.packets_received} packets')
+
+                seq = int.from_bytes(payload[:4], 'big')
+                fin = payload[4]
+                chunk = payload[5:]
+
+                # FIN: complete only if all chunks up to seq are written
+                if fin == 1:
+                    with self.seq_lock:
+                        done = (self.expected_seq == seq)
+                    if done:
+                        print(f'[CLIENT] FIN received, all {seq} chunks written')
                         self.stop_ack.set()
-                        dest_ip = ip_fields['src_ip']
-                        dest_port = udp_fields['src_port']
-                        self.send_ack(self.expected_seq - 1, dest_ip, dest_port) # final ack
-                        self.send_fin_report(dest_ip, dest_port) # Final report
-                        break   # FIN received and all prior chunks written, file fully received.
-    
-    def ack_monitor(self, dest_ip: str, dest_port: int):
-        """Monitors sequence numbers to send acknowledgements after a specified time interval."""
-        ACK_INTERVAL = 0.1
+                        # final ACK so server can finish
+                        self.send_ack(self.expected_seq - 1)
+                        break
+                    else:
+                        # FIN arrived early; keep waiting for missing chunks
+                        continue
+
+                # Duplicate or already-written chunk
+                if seq < self.expected_seq or seq in received:
+                    continue
+                received[seq] = chunk
+
+                # Collect contiguous chunks under the lock, write outside it
+                with self.seq_lock:
+                    to_write = []
+                    while self.expected_seq in received:
+                        to_write.append(received.pop(self.expected_seq))
+                        self.expected_seq += 1
+                for c in to_write:
+                    f.write(c)
+
+    def ack_monitor(self):
+        """Sends a cumulative ACK once the client has advanced ACK_THRESHOLD chunks.
+
+        A time-based fallback still fires the ACK if progress stalls below the
+        threshold (e.g. the final partial window), so the server never waits forever.
+        """
         last_acked = -1
+        stalled_checks = 0
         while not self.stop_ack.is_set():
-            with self.seq_num_lock:
-                current_seq = self.expected_seq - 1
-            if current_seq > last_acked:
-                self.send_ack(current_seq, dest_ip, dest_port)
-                last_acked = current_seq
+            with self.seq_lock:
+                current = self.expected_seq - 1
+            advanced = current - last_acked
+            if advanced >= ACK_THRESHOLD:
+                # Enough new chunks accumulated — send the cumulative ACK
+                self.send_ack(current)
+                last_acked = current
+                stalled_checks = 0
+            elif advanced > 0:
+                # Below threshold but still making progress; ACK if it stalls here
+                stalled_checks += 1
+                if stalled_checks >= 5:   # ~5 * ACK_INTERVAL of no further progress
+                    self.send_ack(current)
+                    last_acked = current
+                    stalled_checks = 0
             time.sleep(ACK_INTERVAL)
 
-    def send_ack(self, seq_num: int, dest_ip: str, dest_port: int):
-        """Sends ACK to specified destination."""
+    def send_ack(self, seq_num: int):
+        """Sends a cumulative ACK for the given sequence number."""
+        if seq_num < 0:
+            return
         payload = f'ACK {seq_num}'.encode()
-        ack_packet = build_packet(self.src_ip, dest_ip, self.src_port, dest_port, payload)
-        self.socket.sendto(ack_packet, (dest_ip, dest_port))
+        packet = build_packet(self.src_ip, self.server_ip,
+                              self.src_port, self.server_port, payload)
+        self.socket.sendto(packet, (self.server_ip, self.server_port))
 
-    def send_fin_report(self, dest_ip: str, dest_port: int):
-        """Sends final report stats client-side to server with a DONE msg."""
-        print(f'[CLIENT] Sending DONE report to server')
+    def send_done(self):
+        """Sends the DONE message with the received file's MD5 and packet count."""
         md5_client = compute_md5(self.save_path)
         payload = f'DONE {md5_client} {self.packets_received}'.encode()
-        packet = build_packet(self.src_ip, dest_ip, self.src_port, dest_port, payload)
-        self.socket.sendto(packet, (dest_ip, dest_port))
+        packet = build_packet(self.src_ip, self.server_ip,
+                              self.src_port, self.server_port, payload)
+        # Send a few times in case of loss
+        for _ in range(5):
+            self.socket.sendto(packet, (self.server_ip, self.server_port))
+            time.sleep(0.05)
+        print(f'[CLIENT] DONE sent, md5={md5_client}')
 
     def close(self):
         """Closes the client socket."""
